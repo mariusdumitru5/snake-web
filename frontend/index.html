@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snake</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --casing: #22304a;
+    --casing-edge: #34476b;
+    --lcd: #c7d6a5;
+    --ink: #2c3622;
+    --ink-soft: #6f7f55;
+    --text: #e3e9f3;
+    --muted: #9aa8c0;
+    --alert: #ffb4a2;
+    --pixel: "Silkscreen", "Courier New", monospace;
+    --body: "Atkinson Hyperlegible", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--casing);
+    color: var(--text);
+    font: 1rem/1.5 var(--body);
+    display: grid;
+    place-items: center;
+    padding: 1.5rem 1rem;
+  }
+  main {
+    width: 100%;
+    max-width: 920px;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 2rem;
+    align-items: start;
+  }
+  h1 {
+    font: 2.25rem/1 var(--pixel);
+    margin: 0 0 1rem;
+    letter-spacing: 0.04em;
+  }
+  h2 { font: 1.125rem/1.2 var(--pixel); margin: 0 0 0.75rem; }
+
+  /* Lo "schermo" del telefono */
+  .screen {
+    background: var(--lcd);
+    color: var(--ink);
+    border: 10px solid var(--casing-edge);
+    border-radius: 18px 18px 36px 36px;
+    padding: 0.75rem;
+  }
+  .hud {
+    display: flex;
+    justify-content: space-between;
+    font: 1rem/1 var(--pixel);
+    padding: 0 0.125rem 0.5rem;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    image-rendering: pixelated;
+    border: 2px solid var(--ink);
+  }
+  .screen-msg {
+    font: 0.875rem/1.3 var(--pixel);
+    min-height: 2.6em;
+    margin: 0.5rem 0 0;
+  }
+
+  .controls {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1rem;
+  }
+  .dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 2.75rem);
+    grid-template-rows: repeat(2, 2.75rem);
+    gap: 0.25rem;
+  }
+  .dpad button { padding: 0; font-size: 1.1rem; }
+  .dpad [data-dir="up"] { grid-column: 2; }
+  .dpad [data-dir="left"] { grid-column: 1; grid-row: 2; }
+  .dpad [data-dir="down"] { grid-column: 2; grid-row: 2; }
+  .dpad [data-dir="right"] { grid-column: 3; grid-row: 2; }
+
+  button {
+    font: 700 1rem/1 var(--body);
+    color: var(--casing);
+    background: var(--text);
+    border: 0;
+    border-radius: 999px;
+    padding: 0.7rem 1.2rem;
+    cursor: pointer;
+  }
+  button.quiet {
+    background: transparent;
+    color: var(--text);
+    box-shadow: inset 0 0 0 2px var(--casing-edge);
+  }
+  button:focus-visible, input:focus-visible {
+    outline: 3px solid var(--lcd);
+    outline-offset: 2px;
+  }
+  .hint { color: var(--muted); font-size: 0.875rem; margin: 0.75rem 0 0; }
+
+  /* Pannello laterale */
+  aside { display: grid; gap: 2rem; }
+  form { display: grid; gap: 0.75rem; }
+  form > button { justify-self: start; }
+  label, .pair > * { min-width: 0; }
+  label { display: grid; gap: 0.25rem; font-size: 0.9rem; color: var(--muted); }
+  input {
+    width: 100%;
+    min-width: 0;
+    font: 1rem var(--body);
+    padding: 0.6rem 0.75rem;
+    border-radius: 8px;
+    border: 2px solid var(--casing-edge);
+    background: #1a2539;
+    color: var(--text);
+  }
+  .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .error { color: var(--alert); min-height: 1.5em; margin: 0; font-size: 0.9rem; }
+  .who { margin: 0 0 0.75rem; }
+  .who #who { font-family: var(--pixel); }
+  .muted { color: var(--muted); }
+  #register-fields { display: grid; gap: 0.75rem; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+  button.link {
+    background: none; color: var(--text); padding: 0; border-radius: 0;
+    text-decoration: underline; text-underline-offset: 3px; font-size: inherit;
+  }
+  .stats {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem;
+    margin: 0 0 1rem;
+  }
+  .stats div { border-top: 2px solid var(--casing-edge); padding-top: 0.4rem; }
+  .stats dt { font-size: 0.8rem; color: var(--muted); }
+  .stats dd { margin: 0; font: 1.5rem/1.2 var(--pixel); }
+
+  ol { margin: 0; padding: 0; list-style: none; counter-reset: rank; }
+  ol li {
+    counter-increment: rank;
+    display: grid;
+    grid-template-columns: 2rem 1fr auto;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--casing-edge);
+  }
+  ol li::before { content: counter(rank); color: var(--muted); font-family: var(--pixel); }
+  ol li span:last-child { font-family: var(--pixel); }
+  .empty { color: var(--muted); margin: 0; }
+  [hidden] { display: none !important; }
+
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; }
+    h1 { font-size: 1.75rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <section aria-label="Gioco">
+    <h1>Snake</h1>
+    <div class="screen">
+      <div class="hud">
+        <span>Punti <span id="score">0</span></span>
+        <span>Record <span id="best">0</span></span>
+      </div>
+      <canvas id="board" width="320" height="320" aria-label="Campo di gioco"></canvas>
+      <p class="screen-msg" id="screen-msg" aria-live="polite">Premi Spazio per iniziare</p>
+    </div>
+    <div class="controls">
+      <button id="start">Inizia partita</button>
+      <div class="dpad" aria-label="Direzione">
+        <button class="quiet" data-dir="up" aria-label="Su">▲</button>
+        <button class="quiet" data-dir="left" aria-label="Sinistra">◀</button>
+        <button class="quiet" data-dir="down" aria-label="Giù">▼</button>
+        <button class="quiet" data-dir="right" aria-label="Destra">▶</button>
+      </div>
+    </div>
+    <p class="hint">Muoviti con le frecce o con W A S D.</p>
+  </section>
+
+  <aside>
+    <section id="account" aria-label="Account">
+      <div id="logged-out">
+        <h2 id="form-title">Accedi</h2>
+        <form id="auth-form" novalidate>
+          <div id="register-fields" hidden>
+            <div class="pair">
+              <label>Nome
+                <input id="nome" autocomplete="given-name">
+              </label>
+              <label>Cognome
+                <input id="cognome" autocomplete="family-name">
+              </label>
+            </div>
+            <label>Email
+              <input id="email" type="email" autocomplete="email">
+            </label>
+          </div>
+          <label>Nome utente
+            <input id="username" autocomplete="username">
+          </label>
+          <label>Password
+            <input id="password" type="password" autocomplete="current-password">
+          </label>
+          <p class="error" id="auth-error" aria-live="polite"></p>
+          <button type="submit" id="submit">Accedi</button>
+        </form>
+        <p class="hint">
+          <span id="switch-text">Non hai un account?</span>
+          <button type="button" class="link" id="switch-mode">Creane uno</button>
+        </p>
+        <p class="hint">Puoi giocare anche senza account, ma la partita viene salvata solo dopo l'accesso.</p>
+      </div>
+      <div id="logged-in" hidden>
+        <h2 id="full-name"></h2>
+        <p class="who"><span id="who"></span> <span class="muted" id="who-email"></span></p>
+        <dl class="stats">
+          <div><dt>Partite giocate</dt><dd id="stat-games">0</dd></div>
+          <div><dt>Record</dt><dd id="stat-best">0</dd></div>
+          <div><dt>Ultima partita</dt><dd id="stat-last">0</dd></div>
+        </dl>
+        <button class="quiet" id="logout">Esci</button>
+      </div>
+    </section>
+
+    <section aria-label="Classifica">
+      <h2>Classifica</h2>
+      <ol id="leaderboard"></ol>
+      <p class="empty" id="leaderboard-empty">Nessun punteggio ancora. Fai la prima partita.</p>
+    </section>
+  </aside>
+</main>
+
+<script>
+  // ---------- API: tutte passano da nginx, che le gira ai Service interni ----------
+  async function api(path, options = {}) {
+    const token = sessionStorage.getItem("token");
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = "Bearer " + token;
+    const res = await fetch(path, { ...options, headers });
+    let body = {};
+    try { body = await res.json(); } catch (e) { /* risposta non JSON, es. 502 di nginx */ }
+    if (!res.ok) throw new Error(body.error || "Il server ha risposto con errore " + res.status + ".");
+    return body;
+  }
+
+  // ---------- Account ----------
+  const form = document.getElementById("auth-form");
+  const authError = document.getElementById("auth-error");
+  const field = (id) => document.getElementById(id).value;
+  let mode = "login";
+
+  function setMode(newMode) {
+    mode = newMode;
+    const register = mode === "register";
+    document.getElementById("register-fields").hidden = !register;
+    document.getElementById("form-title").textContent = register ? "Crea un account" : "Accedi";
+    document.getElementById("submit").textContent = register ? "Crea account" : "Accedi";
+    document.getElementById("switch-text").textContent = register ? "Hai già un account?" : "Non hai un account?";
+    document.getElementById("switch-mode").textContent = register ? "Accedi" : "Creane uno";
+    document.getElementById("password").autocomplete = register ? "new-password" : "current-password";
+    authError.textContent = "";
+  }
+  document.getElementById("switch-mode").addEventListener("click", () =>
+    setMode(mode === "login" ? "register" : "login")
+  );
+
+  function showProfile(p) {
+    document.getElementById("full-name").textContent = p.nome + " " + p.cognome;
+    document.getElementById("who").textContent = p.username;
+    document.getElementById("who-email").textContent = p.email;
+    document.getElementById("stat-games").textContent = p.games_played;
+    document.getElementById("stat-best").textContent = p.best_score;
+    document.getElementById("stat-last").textContent = p.last_score;
+    best = Math.max(best, p.best_score);
+    document.getElementById("best").textContent = best;
+  }
+
+  async function showAccount() {
+    const loggedIn = !!sessionStorage.getItem("token");
+    document.getElementById("logged-out").hidden = loggedIn;
+    document.getElementById("logged-in").hidden = !loggedIn;
+    if (!loggedIn) return;
+    try {
+      showProfile(await api("/api/auth/me"));
+    } catch (err) {
+      sessionStorage.clear();
+      document.getElementById("logged-out").hidden = false;
+      document.getElementById("logged-in").hidden = true;
+      authError.textContent = err.message;
+    }
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    authError.textContent = "";
+    const credentials = { username: field("username"), password: field("password") };
+    try {
+      if (mode === "register") {
+        await api("/api/auth/register", {
+          method: "POST",
+          body: JSON.stringify({ ...credentials, nome: field("nome"), cognome: field("cognome"), email: field("email") }),
+        });
+      }
+      const result = await api("/api/auth/login", { method: "POST", body: JSON.stringify(credentials) });
+      sessionStorage.setItem("token", result.token);
+      form.reset();
+      setMode("login");
+      await showAccount();
+    } catch (err) {
+      authError.textContent = err.message;
+    }
+  });
+
+  document.getElementById("logout").addEventListener("click", async () => {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch (e) { /* esce comunque */ }
+    sessionStorage.clear();
+    best = 0;
+    document.getElementById("best").textContent = 0;
+    showAccount();
+  });
+
+  // ---------- Classifica ----------
+  async function loadLeaderboard() {
+    const list = document.getElementById("leaderboard");
+    try {
+      const rows = await api("/api/snake/leaderboard");
+      list.innerHTML = "";
+      rows.forEach((row) => {
+        const li = document.createElement("li");
+        const name = document.createElement("span");
+        const score = document.createElement("span");
+        name.textContent = row.username;
+        score.textContent = row.score;
+        li.append(name, score);
+        list.append(li);
+      });
+      document.getElementById("leaderboard-empty").hidden = rows.length > 0;
+    } catch (err) {
+      document.getElementById("leaderboard-empty").textContent = "Classifica non disponibile: " + err.message;
+    }
+  }
+
+  // ---------- Gioco ----------
+  const canvas = document.getElementById("board");
+  const ctx = canvas.getContext("2d");
+  const msg = document.getElementById("screen-msg");
+  const INK = "#2c3622", INK_SOFT = "#6f7f55", LCD = "#c7d6a5";
+  const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+  const KEYS = {
+    ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+    w: "up", s: "down", a: "left", d: "right",
+  };
+
+  let grid = 20, speed = 120, cell = 16;
+  let snake, dir, nextDirs, food, score, timer = null;
+  let best = 0;
+
+  async function loadConfig() {
+    try {
+      const cfg = await api("/api/snake/config");
+      grid = cfg.grid_size;
+      speed = cfg.speed_ms;
+    } catch (err) {
+      msg.textContent = "Impostazioni non caricate, uso quelle predefinite.";
+    }
+    canvas.width = canvas.height = grid * cell;
+    reset();
+    draw();
+  }
+
+  function reset() {
+    const mid = Math.floor(grid / 2);
+    snake = [[mid, mid], [mid - 1, mid], [mid - 2, mid]];
+    dir = "right";
+    nextDirs = [];
+    score = 0;
+    document.getElementById("score").textContent = 0;
+    placeFood();
+  }
+
+  function placeFood() {
+    const free = [];
+    for (let x = 0; x < grid; x++)
+      for (let y = 0; y < grid; y++)
+        if (!snake.some(([sx, sy]) => sx === x && sy === y)) free.push([x, y]);
+    food = free[Math.floor(Math.random() * free.length)];
+  }
+
+  function turn(newDir) {
+    const last = nextDirs.length ? nextDirs[nextDirs.length - 1] : dir;
+    const [lx, ly] = DIRS[last], [nx, ny] = DIRS[newDir];
+    if (lx + nx === 0 && ly + ny === 0) return; // niente inversione a U
+    if (nextDirs.length < 3) nextDirs.push(newDir);
+  }
+
+  function step() {
+    if (nextDirs.length) dir = nextDirs.shift();
+    const [dx, dy] = DIRS[dir];
+    const head = [snake[0][0] + dx, snake[0][1] + dy];
+    const hitsWall = head[0] < 0 || head[1] < 0 || head[0] >= grid || head[1] >= grid;
+    const eats = food && head[0] === food[0] && head[1] === food[1];
+    const body = eats ? snake : snake.slice(0, -1);
+    const hitsSelf = body.some(([x, y]) => x === head[0] && y === head[1]);
+    if (hitsWall || hitsSelf) return gameOver();
+
+    snake.unshift(head);
+    if (eats) {
+      score++;
+      document.getElementById("score").textContent = score;
+      if (snake.length === grid * grid) return gameOver();
+      placeFood();
+    } else {
+      snake.pop();
+    }
+    draw();
+  }
+
+  function draw() {
+    ctx.fillStyle = LCD;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = INK_SOFT;
+    if (food) ctx.fillRect(food[0] * cell + 4, food[1] * cell + 4, cell - 8, cell - 8);
+    ctx.fillStyle = INK;
+    snake.forEach(([x, y]) => ctx.fillRect(x * cell + 1, y * cell + 1, cell - 2, cell - 2));
+  }
+
+  function start() {
+    if (timer) return;
+    reset();
+    draw();
+    msg.textContent = "In gioco";
+    timer = setInterval(step, speed);
+  }
+
+  async function gameOver() {
+    clearInterval(timer);
+    timer = null;
+    best = Math.max(best, score);
+    document.getElementById("best").textContent = best;
+    if (!sessionStorage.getItem("token")) {
+      msg.textContent = "Partita finita: " + score + " punti. Accedi per salvarli.";
+      return;
+    }
+    try {
+      const result = await api("/api/snake/score", { method: "POST", body: JSON.stringify({ score }) });
+      msg.textContent = "Partita " + result.games_played + " salvata: " + score + " punti. Record " + result.best + ".";
+      loadLeaderboard();
+      showAccount();
+    } catch (err) {
+      msg.textContent = "Partita finita: " + score + " punti. " + err.message;
+      if (err.message.startsWith("Sessione scaduta")) { sessionStorage.clear(); showAccount(); }
+    }
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.target.tagName === "INPUT") return;
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    if (KEYS[key]) { event.preventDefault(); if (timer) turn(KEYS[key]); }
+    else if (key === " " && !timer) { event.preventDefault(); start(); }
+  });
+  document.getElementById("start").addEventListener("click", start);
+  document.querySelectorAll(".dpad button").forEach((btn) =>
+    btn.addEventListener("click", () => (timer ? turn(btn.dataset.dir) : start()))
+  );
+
+  showAccount();
+  loadConfig();
+  loadLeaderboard();
+</script>
+</body>
+</html>
