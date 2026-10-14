@@ -16,13 +16,14 @@ Nello hash del profilo user:<username>:
 Altre chiavi:
   zset   leaderboard           username -> miglior punteggio (classifica "Record")
   zset   ranked_leaderboard    username -> punti rank (classifica "Classificata")
-  hash   match:<id>            partita classificata in corso: impostazioni estratte,
+  hash   match:<id>            partita classificata in corso: impostazioni scelte,
                                moltiplicatore, ora di inizio (scade dopo 2 ore)
   chiave ranked:active:<user>  id della partita classificata in corso dell'utente
 
 Partita classificata:
-  1. POST /ranked/start   il SERVER estrae le impostazioni a caso (il browser non
-                          può scegliersi quelle facili) e calcola il moltiplicatore
+  1. POST /ranked/start   il giocatore sceglie mappa, velocità e cibo in campo;
+                          la modalità è SEMPRE Caos. Il server controlla i valori
+                          e calcola il moltiplicatore di difficoltà
   2. il browser gioca con quelle impostazioni
   3. POST /ranked/finish  prestazione = punteggio x moltiplicatore;
                           punti rank += (prestazione - obiettivo del rank) x 2.5
@@ -32,7 +33,6 @@ Partita classificata:
   precedente conta come 0 punti: chiudere la pagina quando va male non conviene.
 """
 import os
-import random
 import secrets
 import time
 
@@ -73,13 +73,25 @@ MAX_GAIN = 40
 MAX_LOSS = 30
 MATCH_TTL = 2 * 3600
 
-# Impostazioni estraibili e quanto rendono difficile la partita (moltiplicatore)
+# Impostazioni e quanto rendono difficile la partita (moltiplicatore)
 COLORS = ["classico", "blu", "rosso", "viola", "arancio", "petrolio"]
 FOODS = ["classico", "mela", "ciliegie", "banana", "uva", "fragola"]
 COUNTS = {"1": 1.0, "3": 0.85, "5": 0.75}                    # più cibo = più facile
 SIZES = {"piccola": (12, 1.2), "media": (18, 1.0), "grande": (24, 0.9)}
 SPEEDS = {"lenta": (170, 0.8), "normale": (120, 1.0), "veloce": (80, 1.3)}
 MODES = {"classica": 1.0, "muri": 1.2, "senza-bordi": 0.85, "caos": 1.05}
+RANKED_MODE = "caos"                                         # la classificata è sempre Caos
+
+
+def ranked_multipliers():
+    """Moltiplicatore di ogni combinazione, così il browser lo mostra prima della partita."""
+    table = {}
+    for size in SIZES:
+        for speed in SPEEDS:
+            for count in COUNTS:
+                key = f"{size}|{speed}|{count}"
+                table[key] = multiplier_for({"size": size, "speed": speed, "count": count, "mode": RANKED_MODE})
+    return table
 
 
 def rank_for(points):
@@ -194,7 +206,13 @@ def health():
 @app.get("/config")
 def config():
     """Impostazioni di partenza e regole dei rank per il browser."""
-    return jsonify(grid_size=GRID_SIZE, speed_ms=SPEED_MS, max_grid_size=MAX_GRID_SIZE, ranks=RANKS)
+    return jsonify(
+        grid_size=GRID_SIZE,
+        speed_ms=SPEED_MS,
+        max_grid_size=MAX_GRID_SIZE,
+        ranks=RANKS,
+        ranked={"mode": RANKED_MODE, "multipliers": ranked_multipliers()},
+    )
 
 
 @app.post("/score")
@@ -228,13 +246,19 @@ def ranked_start():
         if previous and db.delete(f"match:{previous_id}"):
             abandoned = settle_match(username, previous, 0)
 
+    data = request.get_json(silent=True) or {}
+    size = str(data.get("size", ""))
+    speed = str(data.get("speed", ""))
+    count = str(data.get("count", ""))
+    if size not in SIZES or speed not in SPEEDS or count not in COUNTS:
+        return jsonify(error="Impostazioni non valide per la classificata."), 400
     settings = {
-        "color": random.choice(COLORS),
-        "food": random.choice(FOODS),
-        "count": random.choice(list(COUNTS)),
-        "size": random.choice(list(SIZES)),
-        "speed": random.choice(list(SPEEDS)),
-        "mode": random.choice(list(MODES)),
+        "color": data.get("color") if data.get("color") in COLORS else "classico",   # solo estetica
+        "food": data.get("food") if data.get("food") in FOODS else "mela",          # solo estetica
+        "count": count,
+        "size": size,
+        "speed": speed,
+        "mode": RANKED_MODE,
     }
     multiplier = multiplier_for(settings)
     match_id = secrets.token_hex(16)
