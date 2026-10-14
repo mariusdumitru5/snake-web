@@ -7,10 +7,12 @@ Configurazione letta dalle variabili d'ambiente:
 
 Struttura dei dati in Redis (condivisa con snake):
   hash   user:<username>   nome, cognome, email, username, password (hash),
-                           created_at, games_played, best_score, last_score
+                           created_at, games_played, best_score, last_score,
+                           rank, rank_points, ranked_games (aggiornati da snake)
   chiave email:<email>     username a cui appartiene l'email (email univoche)
   chiave token:<token>     username; scade dopo TOKEN_TTL secondi
   zset   leaderboard       username -> miglior punteggio (scritto da snake)
+  zset   ranked_leaderboard username -> punti rank (scritto da snake)
 """
 import os
 import re
@@ -62,6 +64,9 @@ def public_profile(data):
         "games_played": int(data.get("games_played", 0)),
         "best_score": int(data.get("best_score", 0)),
         "last_score": int(data.get("last_score", 0)),
+        "rank": data.get("rank", "bronzo"),
+        "rank_points": int(data.get("rank_points", 0)),
+        "ranked_games": int(data.get("ranked_games", 0)),
     }
 
 
@@ -110,6 +115,9 @@ def register():
         "games_played": 0,
         "best_score": 0,
         "last_score": 0,
+        "rank": "bronzo",           # ogni account parte da Bronzo
+        "rank_points": 0,
+        "ranked_games": 0,
     })
     return jsonify(message="Registrazione completata."), 201
 
