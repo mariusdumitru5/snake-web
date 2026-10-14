@@ -16,16 +16,20 @@ Nello hash del profilo user:<username>:
 Altre chiavi:
   zset   leaderboard           username -> miglior punteggio (classifica "Record")
   zset   ranked_leaderboard    username -> punti rank (classifica "Classificata")
-  hash   match:<id>            partita classificata in corso: impostazioni scelte,
-                               moltiplicatore, ora di inizio (scade dopo 2 ore)
-  chiave ranked:active:<user>  id della partita classificata in corso dell'utente
+  hash   match:<id>            partita classificata: impostazioni estratte, moltiplicatore,
+                               ora di inizio (solo dopo /ranked/start)
+  chiave ranked:next:<user>    id della PROSSIMA classificata (estratta, non ancora iniziata)
+  chiave ranked:active:<user>  id della classificata in corso dell'utente
 
-Partita classificata:
-  1. POST /ranked/start   il giocatore sceglie mappa, velocità e cibo in campo;
-                          la modalità è SEMPRE Caos. Il server controlla i valori
-                          e calcola il moltiplicatore di difficoltà
-  2. il browser gioca con quelle impostazioni
-  3. POST /ranked/finish  prestazione = punteggio x moltiplicatore;
+Partita classificata (modalità SEMPRE Caos, il resto estratto a caso dal server):
+  1. POST /ranked/next    il server estrae le impostazioni della prossima partita e
+                          le restituisce con il moltiplicatore, così il giocatore le
+                          vede prima di iniziare. Richiamarlo restituisce SEMPRE la
+                          stessa estrazione finché non la si gioca: non si può
+                          "ritirare" finché escono impostazioni comode
+  2. POST /ranked/start   avvia quella partita (da qui parte il tempo)
+  3. il browser gioca con quelle impostazioni
+  4. POST /ranked/finish  prestazione = punteggio x moltiplicatore;
                           punti rank += (prestazione - obiettivo del rank) x 2.5
                           (da -30 a +40). Se i punti scendono sotto la soglia del
                           rank, si scende di rank.
@@ -33,6 +37,7 @@ Partita classificata:
   precedente conta come 0 punti: chiudere la pagina quando va male non conviene.
 """
 import os
+import random
 import secrets
 import time
 
@@ -71,9 +76,10 @@ RANKS = [
 GAIN_FACTOR = 2.5
 MAX_GAIN = 40
 MAX_LOSS = 30
-MATCH_TTL = 2 * 3600
+MATCH_TTL = 2 * 3600          # una partita iniziata va chiusa entro 2 ore
+NEXT_TTL = 7 * 24 * 3600      # un'estrazione non giocata resta valida 7 giorni
 
-# Impostazioni e quanto rendono difficile la partita (moltiplicatore)
+# Impostazioni estraibili e quanto rendono difficile la partita (moltiplicatore)
 COLORS = ["classico", "blu", "rosso", "viola", "arancio", "petrolio"]
 FOODS = ["classico", "mela", "ciliegie", "banana", "uva", "fragola"]
 COUNTS = {"1": 1.0, "3": 0.85, "5": 0.75}                    # più cibo = più facile
@@ -81,17 +87,7 @@ SIZES = {"piccola": (12, 1.2), "media": (18, 1.0), "grande": (24, 0.9)}
 SPEEDS = {"lenta": (170, 0.8), "normale": (120, 1.0), "veloce": (80, 1.3)}
 MODES = {"classica": 1.0, "muri": 1.2, "senza-bordi": 0.85, "caos": 1.05}
 RANKED_MODE = "caos"                                         # la classificata è sempre Caos
-
-
-def ranked_multipliers():
-    """Moltiplicatore di ogni combinazione, così il browser lo mostra prima della partita."""
-    table = {}
-    for size in SIZES:
-        for speed in SPEEDS:
-            for count in COUNTS:
-                key = f"{size}|{speed}|{count}"
-                table[key] = multiplier_for({"size": size, "speed": speed, "count": count, "mode": RANKED_MODE})
-    return table
+SETTING_KEYS = ("color", "food", "count", "size", "speed", "mode")
 
 
 def rank_for(points):
@@ -211,7 +207,7 @@ def config():
         speed_ms=SPEED_MS,
         max_grid_size=MAX_GRID_SIZE,
         ranks=RANKS,
-        ranked={"mode": RANKED_MODE, "multipliers": ranked_multipliers()},
+        ranked_mode=RANKED_MODE,
     )
 
 
@@ -232,49 +228,73 @@ def submit_score():
     return jsonify(username=username, score=score, best=best, games_played=games_played)
 
 
+def match_payload(match_id, match):
+    return {
+        "match_id": match_id,
+        "settings": {k: match[k] for k in SETTING_KEYS},
+        "multiplier": float(match["multiplier"]),
+    }
+
+
+@app.post("/ranked/next")
+def ranked_next():
+    """Impostazioni della prossima classificata: estratte una volta sola, poi sempre quelle."""
+    username, error = authenticated_user()
+    if error:
+        return error
+
+    match_id = db.get(f"ranked:next:{username}")
+    match = db.hgetall(f"match:{match_id}") if match_id else {}
+    if not match:
+        settings = {
+            "color": random.choice(COLORS),
+            "food": random.choice(FOODS),
+            "count": random.choice(list(COUNTS)),
+            "size": random.choice(list(SIZES)),
+            "speed": random.choice(list(SPEEDS)),
+            "mode": RANKED_MODE,
+        }
+        match_id = secrets.token_hex(16)
+        match = {**settings, "username": username, "multiplier": multiplier_for(settings)}
+        pipe = db.pipeline(transaction=True)
+        pipe.hset(f"match:{match_id}", mapping=match)
+        pipe.expire(f"match:{match_id}", NEXT_TTL)
+        pipe.setex(f"ranked:next:{username}", NEXT_TTL, match_id)
+        pipe.execute()
+
+    return jsonify(match_payload(match_id, match))
+
+
 @app.post("/ranked/start")
 def ranked_start():
     username, error = authenticated_user()
     if error:
         return error
 
-    # Una classificata lasciata a metà conta come partita da 0 punti
+    data = request.get_json(silent=True) or {}
+    match_id = str(data.get("match_id", ""))
+    if not match_id or db.get(f"ranked:next:{username}") != match_id:
+        return jsonify(error="Questa estrazione non è più valida: riapri il menu della classificata."), 409
+    match = db.hgetall(f"match:{match_id}")
+    if not match or match.get("username") != username:
+        return jsonify(error="Partita classificata non trovata o scaduta."), 404
+
+    # Una classificata iniziata e lasciata a metà conta come partita da 0 punti
     abandoned = None
     previous_id = db.get(f"ranked:active:{username}")
     if previous_id:
         previous = db.hgetall(f"match:{previous_id}")
-        if previous and db.delete(f"match:{previous_id}"):
+        if previous and "started_at" in previous and db.delete(f"match:{previous_id}"):
             abandoned = settle_match(username, previous, 0)
 
-    data = request.get_json(silent=True) or {}
-    size = str(data.get("size", ""))
-    speed = str(data.get("speed", ""))
-    count = str(data.get("count", ""))
-    if size not in SIZES or speed not in SPEEDS or count not in COUNTS:
-        return jsonify(error="Impostazioni non valide per la classificata."), 400
-    settings = {
-        "color": data.get("color") if data.get("color") in COLORS else "classico",   # solo estetica
-        "food": data.get("food") if data.get("food") in FOODS else "mela",          # solo estetica
-        "count": count,
-        "size": size,
-        "speed": speed,
-        "mode": RANKED_MODE,
-    }
-    multiplier = multiplier_for(settings)
-    match_id = secrets.token_hex(16)
-
     pipe = db.pipeline(transaction=True)
-    pipe.hset(f"match:{match_id}", mapping={
-        **settings,
-        "username": username,
-        "multiplier": multiplier,
-        "started_at": time.time(),
-    })
+    pipe.hset(f"match:{match_id}", "started_at", time.time())
     pipe.expire(f"match:{match_id}", MATCH_TTL)
+    pipe.delete(f"ranked:next:{username}")
     pipe.setex(f"ranked:active:{username}", MATCH_TTL, match_id)
     pipe.execute()
 
-    return jsonify(match_id=match_id, settings=settings, multiplier=multiplier, abandoned=abandoned)
+    return jsonify(**match_payload(match_id, match), abandoned=abandoned)
 
 
 @app.post("/ranked/finish")
@@ -290,6 +310,8 @@ def ranked_finish():
     match = db.hgetall(f"match:{match_id}") if match_id else {}
     if not match or match.get("username") != username:
         return jsonify(error="Partita classificata non trovata o scaduta."), 404
+    if "started_at" not in match:
+        return jsonify(error="Questa partita classificata non è mai iniziata."), 409
 
     # Controllo di plausibilità: ogni cibo richiede almeno un passo del serpente,
     # e i passi possibili dipendono dal tempo trascorso e dalla velocità
