@@ -28,11 +28,9 @@ L'applicazione è divisa in quattro componenti, ognuno nel suo container:
 9. [Build: dal codice al container](#9-build-dal-codice-al-container)
 10. [Sicurezza](#10-sicurezza)
 11. [Scalabilità e resilienza](#11-scalabilità-e-resilienza)
-12. [Installazione passo passo](#12-installazione-passo-passo)
-13. [Verifiche e test](#13-verifiche-e-test)
-14. [API](#14-api)
-15. [Problemi incontrati e soluzioni](#15-problemi-incontrati-e-soluzioni)
-16. [Struttura del repository](#16-struttura-del-repository)
+12. [Verifiche e test](#13-verifiche-e-test)
+13. [API](#14-api)
+14. [Struttura del repository](#16-struttura-del-repository)
 
 ---
 
@@ -41,18 +39,6 @@ L'applicazione è divisa in quattro componenti, ognuno nel suo container:
 ![Architettura del progetto](imgs/architettura-snake.png)
 
 *Figura 1: architettura completa del progetto.*
-
-### Come leggere lo schema
-
-| Elemento | Significato |
-|---|---|
-| Riquadro tratteggiato esterno | il **cluster OpenShift** |
-| Riquadro tratteggiato interno | il **progetto** `dev-snake`, dove vive l'applicazione |
-| Fuori dal cluster | l'**utente** con il browser e il **repository Git** |
-| Freccia nera | **traffico di rete**, con la porta; sono gli unici collegamenti permessi dalle NetworkPolicy |
-| Freccia grigia tratteggiata | **configurazione**: una ConfigMap o un Secret letti dal Pod (`envFrom`), oppure un volume montato (`mount`) |
-| Freccia blu | **build**: dal codice su Git all'immagine del container |
-| Freccia puntinata | **scalabilità**: l'HPA che aggiunge o toglie Pod al frontend |
 
 ### Gli oggetti OpenShift usati
 
@@ -68,7 +54,7 @@ L'applicazione è divisa in quattro componenti, ognuno nel suo container:
 | **PersistentVolumeClaim (PVC)** | la richiesta di spazio disco per i dati di Redis |
 | **PersistentVolume (PV)** | il disco vero, creato in automatico dalla StorageClass del cluster |
 | **BuildConfig** | la "ricetta" per costruire l'immagine di auth e snake partendo dal codice su Git |
-| **ImageStream** | il riferimento all'immagine costruita; avvisa la Deployment quando ne arriva una nuova |
+| **ImageStream** | il riferimento all'immagine costruita; avvisa il Deployment quando ne arriva una nuova |
 | **HorizontalPodAutoscaler (HPA)** | aggiunge Pod al frontend quando c'è carico, li toglie quando cala |
 | **NetworkPolicy** | firewall interno: decide quali Pod possono parlare con quali |
 
@@ -91,18 +77,6 @@ Per questo **i nomi dei Service sono importanti**: sono scritti nella configuraz
 
 Il Service `redis` è **headless** (`clusterIP: None`): non ha un indirizzo virtuale proprio, e il suo nome DNS risponde direttamente con l'indirizzo del Pod `redis-0`. È il tipo di Service che si usa con gli StatefulSet.
 
-### Tutti i collegamenti
-
-| Da | A | Indirizzo | Perché |
-|---|---|---|---|
-| Browser | Route | `https://<indirizzo della Route>` | aprire il sito e chiamare le API |
-| Route (router) | frontend | Service `frontend:8080` | la Route inoltra tutto al frontend |
-| frontend | auth | `http://auth:8080` | tutto ciò che il browser chiede a `/api/auth/...` |
-| frontend | snake | `http://snake:8080` | tutto ciò che il browser chiede a `/api/snake/...` |
-| snake | auth | `http://auth:8080/verify` | sapere a quale utente appartiene un token |
-| auth | redis | `redis:6379` | utenti, password, sessioni, profilo |
-| snake | redis | `redis:6379` | partite, statistiche, classifiche, rank |
-
 Il browser **non parla mai direttamente** con auth, snake o Redis: passa sempre dal frontend. In questo modo i backend non sono esposti su internet e non servono configurazioni CORS.
 
 ### Il reverse proxy di nginx
@@ -122,7 +96,7 @@ Di default, in un progetto OpenShift **ogni Pod può parlare con ogni altro**. L
 | Policy | Cosa permette |
 |---|---|
 | `default-deny-ingress` | niente: blocca tutto il traffico in entrata verso tutti i Pod del progetto |
-| `allow-router-to-frontend` | il router di OpenShift → frontend, porta 8080 |
+| `allow-to-frontend` | il router di OpenShift → frontend, porta 8080 |
 | `allow-to-auth` | frontend e snake → auth, porta 8080 |
 | `allow-to-snake` | frontend → snake, porta 8080 |
 | `allow-to-redis` | auth e snake → redis, porta 6379 |
@@ -210,7 +184,7 @@ Tutte le chiamate del browser verso snake passano da nginx (`/api/snake/...`); n
 | Immagine | `nginxinc/nginx-unprivileged` (nginx che gira senza root, sulla porta 8080) |
 | Oggetti | Deployment `frontend`, Service `frontend`, Route `frontend`, ConfigMap `frontend`, HPA `frontend` |
 | Configurazione | la ConfigMap `frontend` contiene due file, montati nel container con `subPath`: `default.conf` (configurazione di nginx) e `index.html` (tutta la pagina del gioco) |
-| Risorse | richiesta 50m CPU e 32Mi di memoria, limite 200m e 128Mi |
+| Risorse | richiesta 100m CPU e 100Mi di memoria, limite 200m e 200Mi |
 
 L'immagine nginx standard non funziona su OpenShift: vuole girare come root e ascoltare sulla porta 80, entrambe cose che OpenShift vieta per sicurezza. Per questo si usa la versione *unprivileged*.
 
@@ -509,14 +483,14 @@ Repo-Git ──► BuildConfig ──► Build (S2I Python ubi9) ──► Regis
 
 - La BuildConfig usa la **Context dir** (`/auth` oppure `/snake`) per costruire solo la cartella giusta del repository.
 - L'immagine Python di OpenShift avvia l'app con gunicorn sulla porta 8080; `application = app` in `app.py` è il nome che gunicorn cerca.
-- La Deployment ha un *image trigger*: quando l'ImageStream riceve un'immagine nuova, la Deployment fa ripartire i Pod da sola.
+- Il Deployment ha un *image trigger*: quando l'ImageStream riceve un'immagine nuova, il Deployment fa ripartire i Pod da solo.
 - Dopo una modifica al codice Python: **Builds → BuildConfigs → auth/snake → Actions → Start build**.
 
 Il frontend e Redis, invece, usano immagini già pronte: nginx-unprivileged e rhel9/redis-7.
 
 ### Il registry interno
 
-Le build salvano le immagini nel **registry interno** del cluster (progetto `openshift-image-registry`). Nelle installazioni fatte a mano è spento, e va acceso dall'amministratore. In questo cluster usa un disco persistente (PVC `image-registry-storage`, 20Gi, `ReadWriteOnce`), con una sola replica e strategia `Recreate`.
+Le build salvano le immagini nel **registry interno** del cluster (progetto `openshift-image-registry`). Nelle installazioni fatte a mano è spento, e va acceso dall'amministratore(Roberta cluster admin). In questo cluster usa un disco persistente (PVC `image-registry-storage`, 9Gi, `ReadWriteOnce`), con una sola replica e strategia `Recreate`.
 
 ---
 
@@ -550,39 +524,7 @@ Il frontend ha sempre almeno **2 Pod**: se uno cade o viene aggiornato, l'altro 
 
 ---
 
-## 12. Installazione passo passo
-
-Tutto dalla console web, nel progetto `dev-snake`. I file YAML si incollano con **"+" → Import YAML**.
-
-| # | Cosa | Come |
-|---|---|---|
-| 0 | Registry interno attivo | *solo admin, una volta*: **Administration → CustomResourceDefinitions → Config (imageregistry.operator.openshift.io) → cluster** con `managementState: Managed` e storage `pvc` |
-| 1 | Secret `auth` | **Workloads → Secrets → Create → Key/value secret**, chiave `REDIS_PASSWORD` |
-| 2 | Redis | `openshift/01-service-redis.yaml`, poi `openshift/02-statefulset-redis.yaml` |
-| 3 | ConfigMap `auth` | `openshift/03-configmap-auth.yaml` |
-| 4 | auth | **Import from Git**: Context dir `/auth`, Builder Image Python **`-ubi9`**, **Name `auth`**, Deployment, porta 8080, senza Route |
-| 5 | Collegare la configurazione | **Deployments → auth → Environment → envFrom**: ConfigMap `auth` + Secret `auth` |
-| 6 | ConfigMap `snake` | `openshift/04-configmap-snake.yaml` |
-| 7 | snake | **Import from Git**: Context dir `/snake`, Python `-ubi9`, **Name `snake`**, senza Route |
-| 8 | Collegare la configurazione | **Deployments → snake → Environment → envFrom**: ConfigMap `snake` + Secret `auth` |
-| 9 | frontend | `openshift/05-configmap-frontend.yaml`, `06-deployment-frontend.yaml`, `07-service-frontend.yaml` |
-| 10 | Route | **Networking → Routes → Create**: Service `frontend`, porta 8080, *Secure route*, TLS *Edge*, *Redirect* |
-| 11 | HPA | `openshift/08-hpa-frontend.yaml` |
-| 12 | NetworkPolicy | `openshift/09-network-policies.yaml`, tutto il file in un solo import |
-
-L'ordine conta: nginx controlla all'avvio che `auth` e `snake` esistano, quindi il frontend va creato dopo i backend.
-
-### Aggiornamenti
-
-| Cosa è cambiato | Cosa fare |
-|---|---|
-| Codice di auth o snake | push su Git, poi **Start build** sulla BuildConfig |
-| La pagina del gioco o nginx | aggiornare la ConfigMap `frontend` (tab YAML), poi **Restart rollout** di `frontend` |
-| Una ConfigMap dei backend | modificarla, poi **Restart rollout** della Deployment |
-
----
-
-## 13. Verifiche e test
+## 12. Verifiche e test
 
 ### I servizi sono vivi e raggiungono Redis
 
@@ -625,7 +567,7 @@ Generate traffico verso l'indirizzo della Route dall'esterno, e guardate **Workl
 
 ---
 
-## 14. API
+## 13. API
 
 Indirizzi visti dal browser: passano tutti da nginx.
 
@@ -651,59 +593,19 @@ C'è anche un endpoint usato solo all'interno del cluster: `GET http://auth:8080
 
 ---
 
-## 15. Problemi incontrati e soluzioni
-
-| Problema | Causa | Soluzione |
-|---|---|---|
-| Pod di auth in `ImagePullBackOff`, cerca `docker.io/library/...` | la build non aveva prodotto nessuna immagine, quindi la Deployment usava il nome provvisorio, che senza registry punta a docker.io | sistemare la build (vedi le righe sotto) |
-| "an image stream cannot be used as build output" | il **registry interno** era spento, come succede nelle installazioni fatte a mano | accenderlo con `managementState: Managed` e un disco persistente |
-| Registry "Unavailable: The deployment does not exist" | refuso nel nome della PVC (`image-regisrìtry-storage`) | correggere il `claim` nella configurazione del registry |
-| Build fallita: "CPU does not support x86-64-v3" | l'immagine Python `latest` richiede CPU recenti, e la VM del nodo presenta una CPU generica | usare un'immagine Python **`-ubi9`**, oppure impostare la CPU della VM su *host* |
-| Tutto si chiamava `snake-web` | Import from Git compila il nome dal repository | rifare l'import con **Name `auth`** e **Name `snake`**: il nome del Service è l'indirizzo usato dagli altri |
-| `Name or service not known` verso redis | Service con nome diverso, oppure nessun Pod pronto dietro il Service headless | Service `redis` con selector `app=redis` e Pod `redis-0` pronto |
-| `Authentication required` da Redis | il Secret non era collegato alla Deployment, quindi la password non arrivava | aggiungere il Secret `auth` in **Environment → envFrom** |
-| Classifica con errore 500 | snake senza `REDIS_HOST`/`REDIS_PASSWORD` | ConfigMap `snake` completa + Secret collegato |
-| Errore 500 dopo le NetworkPolicy | le etichette dei Pod non corrispondevano ai selettori della policy, quindi auth e snake non raggiungevano più Redis | allineare `podSelector` ed etichette reali dei Pod |
-| Pagina non aggiornata dopo una modifica | i Pod leggono la ConfigMap solo all'avvio | **Restart rollout** del frontend e ricaricamento con Ctrl+F5 |
-
-**Regola generale per il debug:** il codice HTTP dice dove si è rotto qualcosa.
-
-| Codice | Significato in questo progetto |
-|---|---|
-| 502 / 504 | nginx non raggiunge auth o snake |
-| 503 | snake non raggiunge auth, oppure un servizio non raggiunge Redis (`/health`) |
-| 500 | un backend è andato in errore, quasi sempre perché non raggiunge Redis |
-
-Il primo posto da guardare è sempre il Pod → tab **Logs**, poi il tab **Events**.
-
----
-
-## 16. Struttura del repository
+## 14. Struttura del repository
 
 ```
 ├── README.md                          questo documento
-├── docs/
-│   ├── snake-architettura.png         schema dell'architettura
-│   └── snake-architettura.drawio      schema modificabile (app.diagrams.net)
+├── imgs/
+│   └── snake-architettura.png         schema dell'architettura
 ├── auth/
 │   ├── app.py                         servizio auth (Flask)
 │   └── requirements.txt               flask, redis, gunicorn
 ├── snake/
 │   ├── app.py                         servizio snake (Flask)
 │   └── requirements.txt               flask, redis, requests, gunicorn
-├── frontend/
-│   ├── index.html                     pagina e gioco (HTML, CSS, JavaScript)
-│   └── default.conf                   configurazione di nginx
-└── openshift/
-    ├── 01-service-redis.yaml          Service headless di Redis
-    ├── 02-statefulset-redis.yaml      StatefulSet di Redis con PVC
-    ├── 03-configmap-auth.yaml         configurazione di auth
-    ├── 04-configmap-snake.yaml        configurazione di snake
-    ├── 05-configmap-frontend.yaml     index.html + default.conf come ConfigMap
-    ├── 06-deployment-frontend.yaml    Deployment nginx (senza replicas: decide l'HPA)
-    ├── 07-service-frontend.yaml       Service del frontend
-    ├── 08-hpa-frontend.yaml           autoscaling 2–5 Pod
-    └── 09-network-policies.yaml       NetworkPolicy
+└── frontend/
+    ├── index.html                     pagina e gioco (HTML, CSS, JavaScript)
+    └── default.conf                   configurazione di nginx
 ```
-
-`openshift/05-configmap-frontend.yaml` contiene una **copia** di `frontend/index.html` e `frontend/default.conf`: quando si modifica la pagina, va aggiornata anche la ConfigMap.
